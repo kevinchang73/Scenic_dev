@@ -21,6 +21,7 @@ from metadrive.component.vehicle.vehicle_type import DefaultVehicle
 from scenic.core.simulators import InvalidScenarioError, SimulationCreationError
 from scenic.domains.driving.actions import *
 from scenic.domains.driving.controllers import (
+    MPCCController,
     PIDLateralController,
     PIDLongitudinalController,
 )
@@ -406,3 +407,23 @@ class MetaDriveSimulation(DrivingSimulation):
             )
             lat_controller = PIDLateralController(K_P=0.1, K_D=0.3, K_I=0.0, dt=dt)
         return lon_controller, lat_controller
+
+    def getMPCCController(self, agent, mode="lane_following"):
+        # MetaDrive takes a normalized steering/throttle-brake command in
+        # [-1, 1] rather than physical units, so accel_scale maps the planned
+        # acceleration (m/s^2) onto that normalized throttle range.
+        dt = self.timestep
+        wheelbase = 0.6 * agent.length
+        common = dict(
+            wheelbase=wheelbase,
+            dt=dt,
+            max_accel=3.0,
+            accel_scale=4.0,
+            max_steer_angle=0.6,
+            max_speed=30.0,
+        )
+        if mode == "turning":
+            return MPCCController(horizon=12, q_c=12.0, r_dsteer=1.0, **common)
+        elif mode == "lane_changing":
+            return MPCCController(horizon=15, q_c=6.0, q_l=6.0, **common)
+        return MPCCController(horizon=12, **common)

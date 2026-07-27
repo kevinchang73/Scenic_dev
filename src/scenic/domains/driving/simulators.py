@@ -2,6 +2,7 @@
 
 from scenic.core.simulators import Simulation, Simulator
 from scenic.domains.driving.controllers import (
+    MPCCController,
     PIDLateralController,
     PIDLongitudinalController,
 )
@@ -69,3 +70,37 @@ class DrivingSimulation(Simulation):
             )
             lat_controller = PIDLateralController(K_P=0.1, K_D=0.3, K_I=0.0, dt=dt)
         return lon_controller, lat_controller
+
+    def getMPCCController(self, agent, mode="lane_following"):
+        """Get a Model Predictive Contouring Controller for path tracking.
+
+        The MPCC is a single nonlinear model-predictive controller that jointly
+        computes throttle and steering; it is used by the ``*BehaviorMPCC``
+        driving behaviors as an alternative to the PID controllers. This default
+        implementation returns a `MPCCController` with parameters that work
+        reasonably well for cars in simulators with realistic physics. See
+        `MPCCController` for details, and `NewtonianSimulation` for an example of
+        how to override this function for a particular simulator.
+
+        Using it requires the optional ``casadi`` dependency (``pip install
+        scenic[mpcc]``).
+
+        Arguments:
+            agent: The agent that will use the controller.
+            mode: One of ``"lane_following"``, ``"turning"`` or
+                ``"lane_changing"``, allowing per-maneuver tuning.
+
+        Returns:
+            An `MPCCController` configured for the given agent and mode.
+        """
+        dt = self.timestep
+        wheelbase = 0.6 * agent.length
+        if mode == "turning":
+            return MPCCController(
+                wheelbase=wheelbase, dt=dt, horizon=12, q_c=12.0, r_dsteer=1.0
+            )
+        elif mode == "lane_changing":
+            return MPCCController(
+                wheelbase=wheelbase, dt=dt, horizon=15, q_c=6.0, q_l=6.0
+            )
+        return MPCCController(wheelbase=wheelbase, dt=dt, horizon=12)

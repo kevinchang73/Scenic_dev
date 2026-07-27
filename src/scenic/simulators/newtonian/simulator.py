@@ -23,6 +23,7 @@ from scenic.core.regions import toPolygon
 from scenic.core.simulators import SimulationCreationError
 from scenic.core.vectors import Orientation, Vector
 from scenic.domains.driving.controllers import (
+    MPCCController,
     PIDLateralController,
     PIDLongitudinalController,
 )
@@ -357,3 +358,24 @@ class NewtonianSimulation(DrivingSimulation):
             )
             lat_controller = PIDLateralController(K_P=0.1, K_D=0.3, K_I=0.0, dt=dt)
         return lon_controller, lat_controller
+
+    def getMPCCController(self, agent, mode="lane_following"):
+        # The Newtonian model integrates a bicycle-like model whose turning
+        # length is the vehicle length, and bounds throttle/brake so that the
+        # achievable acceleration is about half of MAX_ACCELERATION/MAX_BRAKING
+        # (see RegulatedControlAction). We tune the MPCC to match.
+        dt = self.timestep
+        wheelbase = agent.length
+        common = dict(
+            wheelbase=wheelbase,
+            dt=dt,
+            max_accel=0.5 * MAX_ACCELERATION,
+            accel_scale=MAX_ACCELERATION,
+            max_steer_angle=0.6,
+            max_speed=30.0,
+        )
+        if mode == "turning":
+            return MPCCController(horizon=12, q_c=12.0, r_dsteer=1.0, **common)
+        elif mode == "lane_changing":
+            return MPCCController(horizon=15, q_c=6.0, q_l=6.0, **common)
+        return MPCCController(horizon=12, **common)

@@ -113,3 +113,32 @@ def test_pedestrian_velocity_vector(getAssetPath):
     # Expect movement northeast (positive dx and dy)
     assert dx > 0.1, f"Expected positive x movement (east), got dx = {dx}"
     assert dy > 0.1, f"Expected positive y movement (north), got dy = {dy}"
+
+
+def test_follow_lane_mpcc(getAssetPath):
+    # Exercise the MPCC controller via FollowLaneBehaviorMPCC: the car should
+    # stay on its lane and accelerate toward the target speed.
+    pytest.importorskip("casadi")
+    mapPath = getAssetPath("maps/CARLA/Town01.xodr")
+
+    code = f"""
+    param render = False
+    param map = r'{mapPath}'
+    model scenic.simulators.newtonian.driving_model
+
+    ego = new Car with behavior FollowLaneBehaviorMPCC(target_speed=8)
+
+    record final (ego.lane is not None) as OnLane
+    record final ego.speed as FinalSpeed
+    terminate after 10 steps
+    """
+    scenario = compileScenic(code, mode2D=True)
+    scene, _ = scenario.generate(maxIterations=1000)
+    simulator = NewtonianSimulator()
+    simulation = simulator.simulate(scene, maxSteps=10)
+    assert simulation.result.records[
+        "OnLane"
+    ], "Vehicle left the lane under FollowLaneBehaviorMPCC."
+    assert (
+        simulation.result.records["FinalSpeed"] > 0.5
+    ), "Vehicle did not accelerate under FollowLaneBehaviorMPCC."

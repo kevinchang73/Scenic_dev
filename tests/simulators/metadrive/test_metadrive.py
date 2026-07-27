@@ -491,3 +491,31 @@ def test_follow_lane(getMetadriveSimulator):
     assert (
         simulation.result.records["FinalSpeed"] > 0.2
     ), "Vehicle did not accelerate along the lane."
+
+
+def test_follow_lane_mpcc(getMetadriveSimulator):
+    # Exercise MetaDrive's getMPCCController via FollowLaneBehaviorMPCC:
+    # car should stay on a lane and actually accelerate.
+    pytest.importorskip("casadi")
+    simulator, openDrivePath, sumoPath = getMetadriveSimulator("Town01")
+    code = f"""
+        param map = r'{openDrivePath}'
+        param sumo_map = r'{sumoPath}'
+
+        model scenic.simulators.metadrive.model
+
+        ego = new Car with behavior FollowLaneBehaviorMPCC(target_speed=8)
+
+        record final (ego._lane is not None) as OnLane
+        record final ego.speed as FinalSpeed
+        terminate after 8 steps
+    """
+    scenario = compileScenic(code, mode2D=True)
+    scene = sampleScene(scenario, maxIterations=1000)
+    simulation = simulator.simulate(scene)
+    assert simulation.result.records[
+        "OnLane"
+    ], "Vehicle left the lane under FollowLaneBehaviorMPCC."
+    assert (
+        simulation.result.records["FinalSpeed"] > 0.2
+    ), "Vehicle did not accelerate along the lane."
