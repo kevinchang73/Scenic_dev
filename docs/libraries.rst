@@ -46,3 +46,44 @@ a representation of a road network that can be loaded from standard map formats 
 dynamic scenarios, providing actions for agents which can drive and walk as well as
 implementations of common behaviors like lane following and collision avoidance. See the
 documentation of the `scenic.domains.driving` module for further details.
+
+MPCC Collision Avoidance
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The MPCC variants of the driving behaviors support optional trajectory-level
+collision avoidance. For example::
+
+	ego = new Car with behavior FollowLaneBehaviorMPCC(
+		target_speed=10,
+		collision_avoidance="all",
+		collision_margin=0.25
+	)
+
+The ``collision_avoidance`` argument has three modes:
+
+``"none"``
+	Preserve the original unconstrained MPCC behavior. This is the default.
+
+``"all"``
+	Constrain the controlled agent against every other physical object in the
+	scenario, including static objects and agents using non-MPCC behaviors.
+
+``"ego_asymmetric"``
+	Constrain the ego against every other object. A non-ego agent ignores the
+	ego, so it may collide with ego, but still constrains itself against static
+	objects and other non-ego agents.
+
+Each agent solves a decentralized optimization problem. Other objects are
+predicted over the MPCC horizon using their current planar velocity and yaw
+rate; their controls are not jointly optimized and future plans are not shared.
+Each rectangular footprint is conservatively covered by three oriented circles,
+giving smooth constraints suitable for the IPOPT solver while allowing closer
+side-by-side driving than a single circumcircle.
+
+Safety separation is implemented with heavily penalized slack variables so that
+an unavoidable or initially unsafe encounter does not make the optimization
+problem infeasible. Therefore, collision avoidance is best-effort rather than a
+formal guarantee. The controller applies emergency braking if the collision-aware
+optimization itself fails. Solver cost grows with the number of physical objects,
+the prediction horizon, and the number of footprint-circle pairs. These modes
+require the optional CasADi dependency, installable through ``scenic[mpcc]``.

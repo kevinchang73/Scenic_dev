@@ -222,6 +222,7 @@ class RegulatedControlAction(SteeringAction):
         max_throttle: Maximum value for **throttle**, when positive.
         max_brake: Maximum (absolute) value for **throttle**, when negative.
         max_steer: Maximum absolute value for **steer**.
+        max_steer_change: Maximum change in **steer** from **past_steer**.
     """
 
     def __init__(
@@ -232,20 +233,21 @@ class RegulatedControlAction(SteeringAction):
         max_throttle: float = 0.5,
         max_brake: float = 0.5,
         max_steer: float = 0.8,
+        max_steer_change: float = 0.1,
     ):
         if throttle > 0:
             throttle = min(throttle, max_throttle)
             brake = 0
         else:
-            throttle = 0
             brake = min(abs(throttle), max_brake)
+            throttle = 0
 
         # Steering regulation: changes cannot happen abruptly, can't steer too much.
 
-        if steer > past_steer + 0.1:
-            steer = past_steer + 0.1
-        elif steer < past_steer - 0.1:
-            steer = past_steer - 0.1
+        if steer > past_steer + max_steer_change:
+            steer = past_steer + max_steer_change
+        elif steer < past_steer - max_steer_change:
+            steer = past_steer - max_steer_change
 
         if steer >= 0:
             steer = min(max_steer, steer)

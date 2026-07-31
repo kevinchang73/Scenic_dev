@@ -337,12 +337,35 @@ def _mpccReference(centerline, is_oppositeTraffic):
     return centerline
 
 
-behavior TurnBehaviorMPCC(trajectory, target_speed=6):
+def _mpccRunStep(controller, agent, current_speed, target_speed, collision_avoidance):
+    obstacles = simulation().getMPCCObstacleStates(agent, collision_avoidance)
+    return controller.run_step(
+        agent.position.x, agent.position.y, agent.heading, current_speed,
+        target_speed, obstacles=obstacles)
+
+
+def _mpccControlAction(throttle, steer, past_steer, collision_avoidance):
+    max_brake = 0.5 if collision_avoidance == "none" else 1.0
+    return RegulatedControlAction(
+        throttle, steer, past_steer, max_brake=max_brake,
+        max_steer_change=0.3)
+
+
+behavior TurnBehaviorMPCC(
+    trajectory, target_speed=6, collision_avoidance="none",
+    collision_margin=0.25
+):
     """MPCC-based variant of `TurnBehavior`.
 
     Uses a `MPCCController` tuned for turning. Like `TurnBehavior`, it is only
     operational within an intersection and terminates once the vehicle leaves
     the intersection.
+
+    :param collision_avoidance: ``"none"`` preserves unconstrained MPCC,
+        ``"all"`` avoids every other physical object, and
+        ``"ego_asymmetric"`` makes ego avoid everything while non-ego agents
+        ignore ego but avoid all other objects.
+    :param collision_margin: Additional footprint clearance in meters.
     """
 
     if isinstance(trajectory, PolylineRegion):
@@ -350,7 +373,9 @@ behavior TurnBehaviorMPCC(trajectory, target_speed=6):
     else:
         trajectory_centerline = concatenateCenterlines([traj.centerline for traj in trajectory])
 
-    _controller = simulation().getMPCCController(self, mode="turning")
+    _controller = simulation().getMPCCController(
+        self, mode="turning", collision_avoidance=collision_avoidance,
+        collision_margin=collision_margin)
     _controller.setReference(trajectory_centerline)
 
     past_steer_angle = 0
@@ -361,14 +386,19 @@ behavior TurnBehaviorMPCC(trajectory, target_speed=6):
         else:
             current_speed = 0
 
-        throttle, current_steer_angle = _controller.run_step(
-            self.position.x, self.position.y, self.heading, current_speed, target_speed)
+        throttle, current_steer_angle = _mpccRunStep(
+            _controller, self, current_speed, target_speed, collision_avoidance)
 
-        take RegulatedControlAction(throttle, current_steer_angle, past_steer_angle)
-        past_steer_angle = current_steer_angle
+        control_action = _mpccControlAction(
+            throttle, current_steer_angle, past_steer_angle, collision_avoidance)
+        take control_action
+        past_steer_angle = control_action.steer
 
 
-behavior FollowLaneBehaviorMPCC(target_speed = 10, laneToFollow=None, is_oppositeTraffic=False):
+behavior FollowLaneBehaviorMPCC(
+    target_speed=10, laneToFollow=None, is_oppositeTraffic=False,
+    collision_avoidance="none", collision_margin=0.25
+):
     """MPCC-based variant of `FollowLaneBehavior`.
 
     Follows the lane on which the vehicle is at (unless **laneToFollow** is
@@ -381,6 +411,9 @@ behavior FollowLaneBehaviorMPCC(target_speed = 10, laneToFollow=None, is_opposit
 
     :param target_speed: Its unit is in m/s. By default, it is set to 10 m/s.
     :param laneToFollow: If the lane to follow is different from the lane that the vehicle is on, this parameter can be used to specify that lane. By default, this variable will be set to None, which means that the vehicle will follow the lane that it is currently on.
+    :param collision_avoidance: Collision policy: ``"none"``, ``"all"``, or
+        ``"ego_asymmetric"``.
+    :param collision_margin: Additional footprint clearance in meters.
     """
 
     past_steer_angle = 0
@@ -407,7 +440,9 @@ behavior FollowLaneBehaviorMPCC(target_speed = 10, laneToFollow=None, is_opposit
         nearby_intersection = current_lane.centerline[-1]
 
     # instantiate the MPCC controller and set its reference path
-    _controller = simulation().getMPCCController(self, mode="lane_following")
+    _controller = simulation().getMPCCController(
+        self, mode="lane_following", collision_avoidance=collision_avoidance,
+        collision_margin=collision_margin)
     _controller.setReference(_mpccReference(current_centerline, is_oppositeTraffic))
 
     while True:
@@ -455,7 +490,10 @@ behavior FollowLaneBehaviorMPCC(target_speed = 10, laneToFollow=None, is_opposit
                 in_turning_lane = True
                 target_speed = TARGET_SPEED_FOR_TURNING
 
-                do TurnBehaviorMPCC(trajectory = current_centerline)
+                do TurnBehaviorMPCC(
+                    trajectory=current_centerline,
+                    collision_avoidance=collision_avoidance,
+                    collision_margin=collision_margin)
 
 
         if (end_lane is not None) and (self.position in end_lane) and not intersection_passed:
@@ -463,18 +501,26 @@ behavior FollowLaneBehaviorMPCC(target_speed = 10, laneToFollow=None, is_opposit
             in_turning_lane = False
             entering_intersection = False
             target_speed = original_target_speed
-            _controller = simulation().getMPCCController(self, mode="lane_following")
+            _controller = simulation().getMPCCController(
+                self, mode="lane_following",
+                collision_avoidance=collision_avoidance,
+                collision_margin=collision_margin)
             _controller.setReference(_mpccReference(current_centerline, is_oppositeTraffic))
 
-        throttle, current_steer_angle = _controller.run_step(
-            self.position.x, self.position.y, self.heading, current_speed, target_speed)
+        throttle, current_steer_angle = _mpccRunStep(
+            _controller, self, current_speed, target_speed, collision_avoidance)
 
-        take RegulatedControlAction(throttle, current_steer_angle, past_steer_angle)
-        past_steer_angle = current_steer_angle
+        control_action = _mpccControlAction(
+            throttle, current_steer_angle, past_steer_angle, collision_avoidance)
+        take control_action
+        past_steer_angle = control_action.steer
         past_speed = current_speed
 
 
-behavior FollowTrajectoryBehaviorMPCC(target_speed = 10, trajectory = None, turn_speed=None):
+behavior FollowTrajectoryBehaviorMPCC(
+    target_speed=10, trajectory=None, turn_speed=None,
+    collision_avoidance="none", collision_margin=0.25
+):
     """MPCC-based variant of `FollowTrajectoryBehavior`.
 
     Follows the given trajectory using a `MPCCController`. The behavior
@@ -482,6 +528,9 @@ behavior FollowTrajectoryBehaviorMPCC(target_speed = 10, trajectory = None, turn
 
     :param target_speed: Its unit is in m/s. By default, it is set to 10 m/s.
     :param trajectory: It is a list of sequential lanes to track, from the lane that the vehicle is initially on to the lane it should end up on.
+    :param collision_avoidance: Collision policy: ``"none"``, ``"all"``, or
+        ``"ego_asymmetric"``.
+    :param collision_margin: Additional footprint clearance in meters.
     """
 
     assert trajectory is not None
@@ -495,7 +544,9 @@ behavior FollowTrajectoryBehaviorMPCC(target_speed = 10, trajectory = None, turn
     trajectory_centerline = concatenateCenterlines(traj_centerline)
 
     # instantiate the MPCC controller and set its reference path
-    _controller = simulation().getMPCCController(self, mode="lane_following")
+    _controller = simulation().getMPCCController(
+        self, mode="lane_following", collision_avoidance=collision_avoidance,
+        collision_margin=collision_margin)
     _controller.setReference(trajectory_centerline)
     past_steer_angle = 0
 
@@ -508,7 +559,10 @@ behavior FollowTrajectoryBehaviorMPCC(target_speed = 10, trajectory = None, turn
 
     while True:
         if self in _model.network.intersectionRegion:
-            do TurnBehaviorMPCC(trajectory_centerline, target_speed=turn_speed)
+            do TurnBehaviorMPCC(
+                trajectory_centerline, target_speed=turn_speed,
+                collision_avoidance=collision_avoidance,
+                collision_margin=collision_margin)
 
         if (distance from self to end_intersection) < distanceToEndpoint:
             break
@@ -518,14 +572,19 @@ behavior FollowTrajectoryBehaviorMPCC(target_speed = 10, trajectory = None, turn
         else:
             current_speed = 0
 
-        throttle, current_steer_angle = _controller.run_step(
-            self.position.x, self.position.y, self.heading, current_speed, target_speed)
+        throttle, current_steer_angle = _mpccRunStep(
+            _controller, self, current_speed, target_speed, collision_avoidance)
 
-        take RegulatedControlAction(throttle, current_steer_angle, past_steer_angle)
-        past_steer_angle = current_steer_angle
+        control_action = _mpccControlAction(
+            throttle, current_steer_angle, past_steer_angle, collision_avoidance)
+        take control_action
+        past_steer_angle = control_action.steer
 
 
-behavior LaneChangeBehaviorMPCC(laneSectionToSwitch, is_oppositeTraffic=False, target_speed=10):
+behavior LaneChangeBehaviorMPCC(
+    laneSectionToSwitch, is_oppositeTraffic=False, target_speed=10,
+    collision_avoidance="none", collision_margin=0.25
+):
     """MPCC-based variant of `LaneChangeBehavior`.
 
     Changes to the lane containing **laneSectionToSwitch** using a
@@ -535,6 +594,10 @@ behavior LaneChangeBehaviorMPCC(laneSectionToSwitch, is_oppositeTraffic=False, t
     is_oppositeTraffic should be specified as True only if the laneSectionToSwitch
     has the opposite traffic direction to the initial lane from which the vehicle
     started the lane change.
+
+    :param collision_avoidance: Collision policy: ``"none"``, ``"all"``, or
+        ``"ego_asymmetric"``.
+    :param collision_margin: Additional footprint clearance in meters.
     """
 
     distanceToEndpoint = 3 # meters
@@ -551,7 +614,9 @@ behavior LaneChangeBehaviorMPCC(laneSectionToSwitch, is_oppositeTraffic=False, t
         nearby_intersection = current_lane.centerline[-1]
 
     # instantiate the MPCC controller and set its reference path
-    _controller = simulation().getMPCCController(self, mode="lane_changing")
+    _controller = simulation().getMPCCController(
+        self, mode="lane_changing", collision_avoidance=collision_avoidance,
+        collision_margin=collision_margin)
     _controller.setReference(_mpccReference(trajectory_centerline, is_oppositeTraffic))
 
     past_steer_angle = 0
@@ -586,8 +651,10 @@ behavior LaneChangeBehaviorMPCC(laneSectionToSwitch, is_oppositeTraffic=False, t
         else:
             current_speed = 0
 
-        throttle, current_steer_angle = _controller.run_step(
-            self.position.x, self.position.y, self.heading, current_speed, target_speed)
+        throttle, current_steer_angle = _mpccRunStep(
+            _controller, self, current_speed, target_speed, collision_avoidance)
 
-        take RegulatedControlAction(throttle, current_steer_angle, past_steer_angle)
-        past_steer_angle = current_steer_angle
+        control_action = _mpccControlAction(
+            throttle, current_steer_angle, past_steer_angle, collision_avoidance)
+        take control_action
+        past_steer_angle = control_action.steer

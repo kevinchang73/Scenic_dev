@@ -408,22 +408,77 @@ class MetaDriveSimulation(DrivingSimulation):
             lat_controller = PIDLateralController(K_P=0.1, K_D=0.3, K_I=0.0, dt=dt)
         return lon_controller, lat_controller
 
-    def getMPCCController(self, agent, mode="lane_following"):
+    def getMPCCController(
+        self,
+        agent,
+        mode="lane_following",
+        collision_avoidance="none",
+        collision_margin=0.25,
+    ):
         # MetaDrive takes a normalized steering/throttle-brake command in
         # [-1, 1] rather than physical units, so accel_scale maps the planned
         # acceleration (m/s^2) onto that normalized throttle range.
         dt = self.timestep
         wheelbase = 0.6 * agent.length
+        max_steer_angle = 0.6
+        # MPCC actions are regulated to a normalized steering change of 0.3 per
+        # step. During lane changes, impose the equivalent physical steering-
+        # rate bound inside the optimizer so its predicted trajectory matches
+        # the controls which MetaDrive actually applies.
+        max_steer_rate = 0.3 * max_steer_angle / dt if mode == "lane_changing" else None
+        collision_options = self._getMPCCCollisionOptions(
+            agent, collision_avoidance, collision_margin
+        )
+        expand_graph = True
+        #expand_graph = collision_options["max_obstacles"] <= 1
         common = dict(
             wheelbase=wheelbase,
             dt=dt,
             max_accel=3.0,
             accel_scale=4.0,
-            max_steer_angle=0.6,
+            max_steer_angle=max_steer_angle,
+            max_steer_rate=max_steer_rate,
             max_speed=30.0,
+            # Town lanes are approximately 3.5 m wide. Keeping the vehicle
+            # center within 0.25 m of the reference leaves about 0.45 m between
+            # the Lincoln's approximately 1.05 m half-width and either lane
+            # edge, allowing for extra lateral extent while the vehicle yaws.
+            # Lane-change mode is exempt because crossing the lane boundary is
+            # the intended maneuver.
+            path_boundary_margin=0.25 if mode == "lane_following" else None,
+            solver_options={
+                # Expansion accelerates repeated solves for small NLPs, but the
+                # generated graph and compilation cost grow rapidly with every
+                # obstacle-circle pair. Multi-obstacle behaviors frequently
+                # rebuild their controller as the route advances, so retaining
+                # the compact graph is substantially faster overall there.
+                "expand": expand_graph,
+                "ipopt.max_iter": 150,
+                # Bound pathological solves while allowing enough time to
+                # recover feasibility after lane changes and route extensions.
+                # MPCCController independently verifies all constraints before
+                # using an iterate from a timed-out solve.
+                "ipopt.max_cpu_time": max(0.5, 2 * dt),
+            },
+            **collision_options,
         )
         if mode == "turning":
-            return MPCCController(horizon=12, q_c=12.0, r_dsteer=1.0, **common)
+            controller = MPCCController(
+                horizon=15,
+                q_c=12.0,
+                r_accel=0.1,
+                r_steer=2.0,
+                r_daccel=5.0,
+                r_dsteer=8.0,
+                **common,
+            )
         elif mode == "lane_changing":
-            return MPCCController(horizon=15, q_c=6.0, q_l=6.0, **common)
-        return MPCCController(horizon=12, **common)
+            controller = MPCCController(horizon=15, q_c=6.0, q_l=6.0, **common)
+        else:
+            controller = MPCCController(
+                horizon=15,
+                r_steer=8.0,
+                r_dsteer=20.0,
+                **common,
+            )
+        return self._registerMPCCController(controller, agent, mode, collision_avoidance)

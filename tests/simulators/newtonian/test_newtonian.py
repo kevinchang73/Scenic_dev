@@ -142,3 +142,45 @@ def test_follow_lane_mpcc(getAssetPath):
     assert (
         simulation.result.records["FinalSpeed"] > 0.5
     ), "Vehicle did not accelerate under FollowLaneBehaviorMPCC."
+
+
+def test_follow_lane_mpcc_collision_avoidance(getAssetPath):
+    pytest.importorskip("casadi")
+    mapPath = getAssetPath("maps/CARLA/Town01.xodr")
+
+    def run(policy):
+        code = f"""
+        param render = False
+        param map = r'{mapPath}'
+        model scenic.simulators.newtonian.driving_model
+
+        lane = Uniform(*filter(lambda lane: len(lane.maneuvers) > 0, network.lanes))
+        ego = new Car on lane.centerline,
+            with behavior FollowLaneBehaviorMPCC(
+                target_speed=8, collision_avoidance="{policy}")
+        require (distance from ego.position to lane.centerline[-1]) > 30
+        obstacle = new Car ahead of ego by 3
+
+        record ego.position as EgoPosition
+        record obstacle.position as ObstaclePosition
+        terminate after 25 steps
+        """
+        scenario = compileScenic(code, mode2D=True)
+        scene, _ = scenario.generate(maxIterations=5000)
+        simulation = NewtonianSimulator().simulate(scene, maxSteps=25)
+        ego_positions = [
+            position for _, position in simulation.result.records["EgoPosition"]
+        ]
+        obstacle_positions = [
+            position for _, position in simulation.result.records["ObstaclePosition"]
+        ]
+        return min(
+            ego.distanceTo(obstacle)
+            for ego, obstacle in zip(ego_positions, obstacle_positions)
+        )
+
+    unprotected_distance = run("none")
+    protected_distance = run("all")
+
+    assert unprotected_distance < 4.5, "Baseline MPCC did not reach the obstacle."
+    assert protected_distance > 4.5, "Collision-aware MPCC overlapped the obstacle."

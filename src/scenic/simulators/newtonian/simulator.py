@@ -359,7 +359,13 @@ class NewtonianSimulation(DrivingSimulation):
             lat_controller = PIDLateralController(K_P=0.1, K_D=0.3, K_I=0.0, dt=dt)
         return lon_controller, lat_controller
 
-    def getMPCCController(self, agent, mode="lane_following"):
+    def getMPCCController(
+        self,
+        agent,
+        mode="lane_following",
+        collision_avoidance="none",
+        collision_margin=0.25,
+    ):
         # The Newtonian model integrates a bicycle-like model whose turning
         # length is the vehicle length, and bounds throttle/brake so that the
         # achievable acceleration is about half of MAX_ACCELERATION/MAX_BRAKING
@@ -373,9 +379,12 @@ class NewtonianSimulation(DrivingSimulation):
             accel_scale=MAX_ACCELERATION,
             max_steer_angle=0.6,
             max_speed=30.0,
+            **self._getMPCCCollisionOptions(agent, collision_avoidance, collision_margin),
         )
         if mode == "turning":
-            return MPCCController(horizon=12, q_c=12.0, r_dsteer=1.0, **common)
+            controller = MPCCController(horizon=12, q_c=12.0, r_dsteer=1.0, **common)
         elif mode == "lane_changing":
-            return MPCCController(horizon=15, q_c=6.0, q_l=6.0, **common)
-        return MPCCController(horizon=12, **common)
+            controller = MPCCController(horizon=15, q_c=6.0, q_l=6.0, **common)
+        else:
+            controller = MPCCController(horizon=12, **common)
+        return self._registerMPCCController(controller, agent, mode, collision_avoidance)
